@@ -27,7 +27,7 @@ import (
 	"github.com/docker/distribution/registry/api/v2"
 	"github.com/docker/distribution/registry/client/auth"
 	"github.com/docker/distribution/registry/client/transport"
-	"github.com/hashicorp/go-multierror"
+	"github.com/jpillora/backoff"
 	"github.com/pivotal-golang/clock"
 )
 
@@ -44,12 +44,25 @@ func main() {
 	// silence benign ecr-login errors/warnings
 	seelog.UseLogger(seelog.Disabled)
 
-	ecrUser, ecrPass, err := ecr.ECRHelper{
-		ClientFactory: ecrapi.DefaultClientFactory{},
-	}.Get(request.Source.Repository)
-	if err == nil {
-		request.Source.Username = ecrUser
-		request.Source.Password = ecrPass
+	b := &backoff.Backoff{
+		Min:    100 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2,
+		Jitter: false,
+	}
+
+	for i := 0; i < 5; i++ {
+		ecrUser, ecrPass, err := ecr.ECRHelper{
+			ClientFactory: ecrapi.DefaultClientFactory{},
+		}.Get(request.Source.Repository)
+		if err == nil {
+			request.Source.Username = ecrUser
+			request.Source.Password = ecrPass
+			break
+		}
+
+		// exponentially wait to retry
+		sleep(b.Duration())
 	}
 
 	registryHost, repo := parseRepository(request.Source.Repository)
